@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-parser"
+version = "0.1.0"
+description = "Parse PDF files into structured JSON"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "PDF Parser Team" }
+]
+
+[tool.ruff]
+target-version = "py38"
+line-length = 100
+select = ["E", "F", "B"]
+ignore = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"

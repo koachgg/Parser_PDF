@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["pages", "meta"],
+  "properties": {
+    "pages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["page_number", "content"],
+        "properties": {
+          "page_number": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "content": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["type"],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": ["paragraph", "table", "chart"]
+                },
+                "section": {
+                  "type": ["string", "null"]
+                },
+                "sub_section": {
+                  "type": ["string", "null"]
+                },
+                "text": {
+                  "type": ["string", "null"]
+                },
+                "table_data": {
+                  "type": ["array", "null"],
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "chart_data": {
+                  "type": ["array", "null"],
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "description": {
+                  "type": ["string", "null"]
+                },
+                "bbox": {
+                  "type": ["array", "null"],
+                  "minItems": 4,
+                  "maxItems": 4,
+                  "items": {
+                    "type": "number"
+                  }
+                }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": { "type": { "const": "paragraph" } }
+                  },
+                  "then": {
+                    "properties": {
+                      "text": { "type": "string" }
+                    },
+                    "required": ["text"]
+                  }
+                },
+                {
+                  "if": {
+                    "properties": { "type": { "const": "table" } }
+                  },
+                  "then": {
+                    "properties": {
+                      "table_data": { 
+                        "type": "array",
+                        "items": {
+                          "type": "array",
+                          "items": { "type": "string" }
+                        }
+                      }
+                    },
+                    "required": ["table_data"]
+                  }
+                },
+                {
+                  "if": {
+                    "properties": { "type": { "const": "chart" } }
+                  },
+                  "then": {
+                    "properties": {
+                      "description": { "type": "string" }
+                    },
+                    "required": ["description"]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "meta": {
+      "type": "object",
+      "required": ["source_file", "parser_versions", "created_at"],
+      "properties": {
+        "source_file": {
+          "type": "string"
+        },
+        "parser_versions": {
+          "type": "object",
+          "required": ["text", "tables", "charts"],
+          "properties": {
+            "text": { "type": "string" },
+            "tables": { "type": "string" },
+            "charts": { "type": "string" }
+          }
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}
