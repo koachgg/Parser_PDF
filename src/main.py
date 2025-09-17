@@ -62,7 +62,85 @@ def get_package_version(package_name: str) -> str:
     except (pkg_resources.DistributionNotFound, Exception):
         return "unknown"
 
-def process_page(pdf_path: str, page: fitz.Page, page_num: int, enable_ocr: bool, table_mode: str) -> Dict[str, Any]:
+def process_document(pdf_path: str, doc: fitz.Document, max_pages: Optional[int], enable_ocr: bool, table_mode: str) -> Dict[str, Any]:
+    """
+    Process the entire PDF document with preprocessing for better structure detection.
+    
+    Args:
+        pdf_path: Path to PDF file
+        doc: PDF document object
+        max_pages: Maximum number of pages to process
+        enable_ocr: Whether to use OCR for text extraction
+        table_mode: Table extraction mode
+        
+    Returns:
+        Structured document data
+    """
+    result = {
+        "metadata": {
+            "file_name": os.path.basename(pdf_path),
+            "creation_date": datetime.datetime.now().isoformat(),
+            "page_count": len(doc)
+        },
+        "pages": []
+    }
+    
+    # Initialize a shared section tracker for the entire document
+    section_tracker = SectionTracker()
+    
+    # Determine number of pages to process
+    total_pages = len(doc)
+    pages_to_process = min(total_pages, max_pages) if max_pages else total_pages
+    
+    # First pass: collect all blocks for document-level analysis
+    logger.info("Performing document structure analysis...")
+    all_doc_blocks = []
+    
+    for page_idx in range(pages_to_process):
+        page = doc[page_idx]
+        # Extract raw text blocks for structure analysis
+        raw_blocks = page.get_text("dict")["blocks"]
+        for block in raw_blocks:
+            if block["type"] != 0:  # Skip non-text blocks
+                continue
+                
+            block_text = ""
+            font_info = {}
+            for line in block.get("lines", []):
+                for span in line.get("spans", []):
+                    block_text += span.get("text", "")
+                    # Use first span's font info as representative
+                    if not font_info and "font" in span and "size" in span:
+                        font_info = {
+                            "font": span.get("font"),
+                            "font_size": span.get("size"),
+                            "is_bold": span.get("flags", 0) & 2 > 0,
+                            "is_italic": span.get("flags", 0) & 1 > 0
+                        }
+            
+            if block_text.strip():
+                all_doc_blocks.append({
+                    "text": block_text,
+                    **font_info,
+                    "page_num": page_idx + 1,
+                    "bbox": block["bbox"]
+                })
+    
+    # Preprocess document structure to learn patterns
+    section_tracker.preprocess_document(all_doc_blocks)
+    logger.info(f"Document analysis complete - detected {section_tracker.section_count} sections")
+    
+    # Process each page with the informed section tracker
+    for page_idx in range(pages_to_process):
+        page_num = page_idx + 1
+        logger.info(f"Processing page {page_num}/{total_pages}")
+        page = doc[page_idx]
+        page_data = process_page(pdf_path, page, page_num, enable_ocr, table_mode, section_tracker)
+        result["pages"].append(page_data)
+    
+    return result
+
+def process_page(pdf_path: str, page: fitz.Page, page_num: int, enable_ocr: bool, table_mode: str, section_tracker: Optional[SectionTracker] = None) -> Dict[str, Any]:
     """
     Process a single PDF page.
     
@@ -72,12 +150,14 @@ def process_page(pdf_path: str, page: fitz.Page, page_num: int, enable_ocr: bool
         page_num: 1-based page number
         enable_ocr: Whether to use OCR for text extraction
         table_mode: Table extraction mode
+        section_tracker: Optional pre-initialized section tracker
         
     Returns:
         Structured page data
     """
-    # Initialize section tracker
-    section_tracker = SectionTracker()
+    # Initialize section tracker if not provided
+    if section_tracker is None:
+        section_tracker = SectionTracker()
     
     # Extract text blocks
     text_blocks = extract_text_blocks(page, section_tracker)
@@ -86,7 +166,7 @@ def process_page(pdf_path: str, page: fitz.Page, page_num: int, enable_ocr: bool
     table_blocks = extract_tables(page, pdf_path, page_num, table_mode)
     
     # Extract charts
-    chart_blocks = detect_charts(page)
+    chart_blocks = detect_charts(page, use_ocr=enable_ocr)
     
     # Use OCR if enabled and needed
     ocr_blocks = []
@@ -211,33 +291,20 @@ def main(input_path: Optional[str], output_path: Optional[str], enable_ocr: bool
         # Open the PDF
         doc = fitz.open(input_path)
         
-        # Prepare result structure
-        result = {
-            "pages": [],
-            "meta": {
-                "source_file": os.path.basename(input_path),
-                "parser_versions": {
-                    "text": get_package_version("PyMuPDF"),
-                    "tables": get_package_version("camelot-py"),
-                    "charts": "0.1.0"  # Custom chart detection
-                },
-                "created_at": datetime.datetime.now().isoformat()
-            }
+        # Process the entire document with improved structure detection
+        start_time = time.time()
+        result = process_document(input_path, doc, max_pages, enable_ocr, table_mode)
+        
+        # Add version information to the metadata
+        result["meta"] = {
+            "source_file": os.path.basename(input_path),
+            "parser_versions": {
+                "text": get_package_version("PyMuPDF"),
+                "tables": get_package_version("camelot-py"),
+                "charts": "0.1.0"  # Custom chart detection
+            },
+            "created_at": datetime.datetime.now().isoformat()
         }
-        
-        # Process each page
-        total_pages = len(doc)
-        pages_to_process = min(total_pages, max_pages) if max_pages else total_pages
-        
-        logger.info(f"Processing {pages_to_process} of {total_pages} pages")
-        
-        for page_idx in range(pages_to_process):
-            page_num = page_idx + 1
-            logger.info(f"Processing page {page_num}/{total_pages}")
-            
-            page = doc[page_idx]
-            page_data = process_page(input_path, page, page_num, enable_ocr, table_mode)
-            result["pages"].append(page_data)
         
         # Write output JSON
         schema_path = DEFAULT_SCHEMA_PATH if os.path.isfile(DEFAULT_SCHEMA_PATH) else None
@@ -249,14 +316,16 @@ def main(input_path: Optional[str], output_path: Optional[str], enable_ocr: bool
             total_paragraphs = sum(len([c for c in page["content"] if c["type"] == "paragraph"]) for page in result["pages"])
             total_tables = sum(len([c for c in page["content"] if c["type"] == "table"]) for page in result["pages"])
             total_charts = sum(len([c for c in page["content"] if c["type"] == "chart"]) for page in result["pages"])
+            processed_pages = len(result["pages"])
+            total_pages = result["metadata"]["page_count"]
             
             logger.info(f"JSON output written to {output_path}")
-            logger.info(f"Summary: {pages_to_process} pages, {total_paragraphs} paragraphs, {total_tables} tables, {total_charts} charts")
+            logger.info(f"Summary: {processed_pages} pages, {total_paragraphs} paragraphs, {total_tables} tables, {total_charts} charts")
             logger.info(f"Processing completed in {time.time() - start_time:.2f} seconds")
             
             # Print a summary to stdout
             print(f"PDF Parsing Complete:")
-            print(f"- Pages processed: {pages_to_process} of {total_pages}")
+            print(f"- Pages processed: {processed_pages} of {total_pages}")
             print(f"- Paragraphs extracted: {total_paragraphs}")
             print(f"- Tables extracted: {total_tables}")
             print(f"- Charts detected: {total_charts}")

@@ -368,6 +368,45 @@ class TableExtractor:
         
         return unique_tables
     
+    def _calculate_iou(self, boxA: List[float], boxB: List[float]) -> float:
+        """
+        Calculate the Intersection over Union (IoU) of two bounding boxes.
+        
+        Args:
+            boxA: First bounding box [x0, y0, x1, y1]
+            boxB: Second bounding box [x0, y0, x1, y1]
+            
+        Returns:
+            IoU value between 0 and 1
+        """
+        # Ensure boxes are in the correct format
+        if len(boxA) != 4 or len(boxB) != 4:
+            return 0.0
+        
+        try:
+            # Determine the coordinates of the intersection rectangle
+            xA = max(boxA[0], boxB[0])
+            yA = max(boxA[1], boxB[1])
+            xB = min(boxA[2], boxB[2])
+            yB = min(boxA[3], boxB[3])
+            
+            # Compute the area of intersection
+            interArea = max(0, xB - xA) * max(0, yB - yA)
+            
+            # Compute the area of both bounding boxes
+            boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+            boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+            
+            # Compute the intersection over union
+            if boxAArea + boxBArea - interArea <= 0:
+                return 0.0
+                
+            iou = interArea / float(boxAArea + boxBArea - interArea)
+            return iou
+        except Exception as e:
+            logger.warning(f"IoU calculation failed: {str(e)}")
+            return 0.0
+            
     def _remove_duplicate_tables(self, tables: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Remove duplicate tables based on content and position overlap.
@@ -392,10 +431,21 @@ class TableExtractor:
             
             for unique_table in unique_tables:
                 # Check content similarity
-                table1 = table["table_data"]
-                table2 = unique_table["table_data"]
+                table1 = table.get("table_data", [])
+                table2 = unique_table.get("table_data", [])
                 
-                # Simple size comparison first
+                # Check bounding box overlap using IoU
+                table_bbox = table.get("bbox", [0, 0, 0, 0])
+                unique_bbox = unique_table.get("bbox", [0, 0, 0, 0])
+                iou_score = self._calculate_iou(table_bbox, unique_bbox)
+                
+                # If bounding boxes overlap significantly or content is similar, consider it a duplicate
+                if iou_score > 0.3:  # 30% overlap threshold
+                    is_duplicate = True
+                    logger.debug(f"Found duplicate table with IoU: {iou_score:.2f}")
+                    break
+                    
+                # Simple size comparison as fallback
                 if abs(len(table1) - len(table2)) <= 2:
                     # Check first row (header) similarity
                     if table1 and table2 and self._row_similarity(table1[0], table2[0]) > 0.7:
