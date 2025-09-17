@@ -1,0 +1,22 @@
+name: chart-data-extraction
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.9
+  - pip
+  - pymupdf
+  - pillow
+  - opencv
+  - numpy
+  - pandas
+  - matplotlib
+  - camelot-py
+  - opencv
+  - pip:
+    - PyYAML
+    - pytest
+    - pytesseract
+    - pdfplumber
+    - python-multipart
+    - ghostscript

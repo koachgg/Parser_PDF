@@ -81,3 +81,4 @@ debug_output/
 **/debug_output/
 **/debug/
 *.debug.png
+temp/ 

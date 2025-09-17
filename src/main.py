@@ -40,12 +40,13 @@ except ImportError:
     print("WARNING: pkg_resources not available. Version information will be limited.")
 
 from .parser.text_blocks import extract_text_blocks
-from .parser.tables import extract_tables, TableExtractor
+from .parser.unified_tables import extract_tables, UnifiedTableExtractor
 from .parser.charts import detect_charts
 from .parser.sections import SectionTracker
 from .parser.utils import is_ocr_needed
 from .parser.content_overlap import remove_content_overlap
 from .parser.visual_debug import visualize_page_content
+from .parser.parallel import process_pages_in_parallel, is_parallel_processing_supported
 from .ocr.ocr_pipeline import process_page_with_ocr
 from .exporters.json_writer import JSONWriter
 from .config import ConfigManager
@@ -89,6 +90,7 @@ def process_document(pdf_path: str, doc: fitz.Document, max_pages: Optional[int]
         max_pages: Maximum number of pages to process
         enable_ocr: Whether to use OCR for text extraction
         table_mode: Table extraction mode
+        config: Optional configuration manager
         
     Returns:
         Structured document data
@@ -147,13 +149,50 @@ def process_document(pdf_path: str, doc: fitz.Document, max_pages: Optional[int]
     section_tracker.preprocess_document(all_doc_blocks)
     logger.info(f"Document analysis complete - detected {section_tracker.section_count} sections")
     
-    # Process each page with the informed section tracker
-    for page_idx in range(pages_to_process):
-        page_num = page_idx + 1
-        logger.info(f"Processing page {page_num}/{total_pages}")
-        page = doc[page_idx]
-        page_data = process_page(pdf_path, page, page_num, enable_ocr, table_mode, section_tracker, config)
-        result["pages"].append(page_data)
+    # Check if parallel processing is enabled and supported
+    use_parallel = False
+    batch_size = 1
+    max_workers = None
+    
+    if config:
+        use_parallel = config.get("performance", "parallel_processing", False)
+        batch_size = config.get("performance", "batch_size", 1)
+        max_workers = config.get("performance", "max_workers", None)
+    
+    if use_parallel and is_parallel_processing_supported():
+        logger.info(f"Using parallel processing with {batch_size} pages per batch")
+        
+        # Create a wrapper function for process_page that includes all necessary args
+        def page_processor(pdf_path, page, page_num, doc, **kwargs):
+            return process_page(
+                pdf_path, 
+                page, 
+                page_num, 
+                enable_ocr=enable_ocr, 
+                table_mode=table_mode, 
+                section_tracker=section_tracker,
+                config=config
+            )
+        
+        # Process pages in parallel
+        page_data_list = process_pages_in_parallel(
+            pdf_path, 
+            doc, 
+            page_processor, 
+            batch_size=batch_size, 
+            max_workers=max_workers
+        )
+        
+        # Add pages to result
+        result["pages"] = page_data_list[:pages_to_process]
+    else:
+        # Process sequentially (original approach)
+        for page_idx in range(pages_to_process):
+            page_num = page_idx + 1
+            logger.info(f"Processing page {page_num}/{total_pages}")
+            page = doc[page_idx]
+            page_data = process_page(pdf_path, page, page_num, enable_ocr, table_mode, section_tracker, config)
+            result["pages"].append(page_data)
     
     return result
 
@@ -185,7 +224,7 @@ def process_page(pdf_path: str, page: fitz.Page, page_num: int, enable_ocr: bool
     table_blocks = extract_tables(page, pdf_path, page_num, table_mode)
     
     # Extract charts
-    chart_blocks = detect_charts(page, use_ocr=enable_ocr)
+    chart_blocks = detect_charts(page, use_ocr=enable_ocr, config=config)
     
     # Use OCR if enabled and needed
     ocr_blocks = []
@@ -289,9 +328,13 @@ def check_dependencies():
 @click.option("--max-pages", type=int, help="Maximum number of pages to process")
 @click.option("--debug/--no-debug", default=None, help="Enable debug output")
 @click.option("--visual-debug/--no-visual-debug", default=None, help="Enable visual debugging output")
+@click.option("--parallel/--no-parallel", default=None, help="Enable parallel processing")
+@click.option("--workers", type=int, help="Number of worker processes for parallel processing")
+@click.option("--batch-size", type=int, help="Number of pages to process in each batch")
 def main(input_path: Optional[str], output_path: Optional[str], config_path: Optional[str], 
          enable_ocr: Optional[bool], table_mode: Optional[str], max_pages: Optional[int], 
-         debug: Optional[bool], visual_debug: Optional[bool]):
+         debug: Optional[bool], visual_debug: Optional[bool], parallel: Optional[bool],
+         workers: Optional[int], batch_size: Optional[int]):
     """
     Parse PDF and convert to structured JSON.
     
@@ -312,6 +355,12 @@ def main(input_path: Optional[str], output_path: Optional[str], config_path: Opt
         config.set("tables", "mode", table_mode)
     if visual_debug is not None:
         config.set("visual_debug", "enabled", visual_debug)
+    if parallel is not None:
+        config.set("performance", "parallel_processing", parallel)
+    if workers is not None:
+        config.set("performance", "max_workers", workers)
+    if batch_size is not None:
+        config.set("performance", "batch_size", batch_size)
     
     # Set up logging level
     if config.get("general", "debug", False):

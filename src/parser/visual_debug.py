@@ -72,10 +72,13 @@ def draw_bounding_boxes(page: fitz.Page, blocks: List[Dict[str, Any]], output_pa
             # Draw label
             label = f"{block_type} {i+1}"
             try:
+                # Ensure label position is valid (stays within image bounds)
+                text_y = max(15, bbox[1] - 15)  # Keep at least 15px from top edge
+                
                 if font:
-                    draw.text((bbox[0], bbox[1] - 15), label, fill=color, font=font)
+                    draw.text((bbox[0], text_y), label, fill=color, font=font)
                 else:
-                    draw.text((bbox[0], bbox[1] - 15), label, fill=color)
+                    draw.text((bbox[0], text_y), label, fill=color)
             except Exception as e:
                 logger.warning(f"Failed to draw text label: {str(e)}")
         
