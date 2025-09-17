@@ -19,6 +19,20 @@ except ImportError:
     print("WARNING: PyMuPDF (fitz) not available. PDF parsing will fail.")
 
 try:
+    from PIL import Image, ImageDraw
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
+    print("WARNING: Pillow (PIL) not available. Visual debugging will be disabled.")
+    
+try:
+    import yaml
+    YAML_AVAILABLE = True
+except ImportError:
+    YAML_AVAILABLE = False
+    print("WARNING: PyYAML not available. Configuration from YAML files will not be supported.")
+
+try:
     import pkg_resources
     PKG_RESOURCES_AVAILABLE = True
 except ImportError:
@@ -30,8 +44,11 @@ from .parser.tables import extract_tables, TableExtractor
 from .parser.charts import detect_charts
 from .parser.sections import SectionTracker
 from .parser.utils import is_ocr_needed
+from .parser.content_overlap import remove_content_overlap
+from .parser.visual_debug import visualize_page_content
 from .ocr.ocr_pipeline import process_page_with_ocr
 from .exporters.json_writer import JSONWriter
+from .config import ConfigManager
 
 # Set up logging
 logging.basicConfig(
@@ -62,7 +79,7 @@ def get_package_version(package_name: str) -> str:
     except (pkg_resources.DistributionNotFound, Exception):
         return "unknown"
 
-def process_document(pdf_path: str, doc: fitz.Document, max_pages: Optional[int], enable_ocr: bool, table_mode: str) -> Dict[str, Any]:
+def process_document(pdf_path: str, doc: fitz.Document, max_pages: Optional[int], enable_ocr: bool, table_mode: str, config: Optional[ConfigManager] = None) -> Dict[str, Any]:
     """
     Process the entire PDF document with preprocessing for better structure detection.
     
@@ -135,12 +152,13 @@ def process_document(pdf_path: str, doc: fitz.Document, max_pages: Optional[int]
         page_num = page_idx + 1
         logger.info(f"Processing page {page_num}/{total_pages}")
         page = doc[page_idx]
-        page_data = process_page(pdf_path, page, page_num, enable_ocr, table_mode, section_tracker)
+        page_data = process_page(pdf_path, page, page_num, enable_ocr, table_mode, section_tracker, config)
         result["pages"].append(page_data)
     
     return result
 
-def process_page(pdf_path: str, page: fitz.Page, page_num: int, enable_ocr: bool, table_mode: str, section_tracker: Optional[SectionTracker] = None) -> Dict[str, Any]:
+def process_page(pdf_path: str, page: fitz.Page, page_num: int, enable_ocr: bool, table_mode: str, 
+              section_tracker: Optional[SectionTracker] = None, config: Optional[ConfigManager] = None) -> Dict[str, Any]:
     """
     Process a single PDF page.
     
@@ -151,6 +169,7 @@ def process_page(pdf_path: str, page: fitz.Page, page_num: int, enable_ocr: bool
         enable_ocr: Whether to use OCR for text extraction
         table_mode: Table extraction mode
         section_tracker: Optional pre-initialized section tracker
+        config: Optional configuration manager
         
     Returns:
         Structured page data
@@ -177,6 +196,10 @@ def process_page(pdf_path: str, page: fitz.Page, page_num: int, enable_ocr: bool
     # Combine all content blocks
     all_blocks = text_blocks + table_blocks + chart_blocks + ocr_blocks
     
+    # Remove overlapping content (e.g., text inside tables) using config if available
+    overlap_config = config.get_content_overlap_config() if config else None
+    all_blocks = remove_content_overlap(all_blocks, overlap_config)
+    
     # Attach section information to tables and charts based on nearest text block
     if text_blocks:
         # Find sections for non-text blocks
@@ -193,10 +216,29 @@ def process_page(pdf_path: str, page: fitz.Page, page_num: int, enable_ocr: bool
                     block["section"] = nearest_text_block["section"]
                     block["sub_section"] = nearest_text_block["sub_section"]
     
+    # Generate visual debug output if enabled
+    visual_debug_img = None
+    if config and config.get("visual_debug", "enabled", False) and PIL_AVAILABLE:
+        debug_config = {
+            "output_path": config.get("visual_debug", "output_path", "debug_output"),
+            "draw_bounding_boxes": config.get("visual_debug", "draw_bounding_boxes", True),
+            "save_images": config.get("visual_debug", "save_images", False)
+        }
+        # Get debug configuration from the ConfigManager
+        debug_config = config.get_visual_debug_config() if config else {
+            "output_path": debug_config.get("output_path", "debug_output"),
+            "draw_bounding_boxes": debug_config.get("draw_bounding_boxes", True),
+            "save_images": debug_config.get("save_images", False)
+        }
+        visual_debug_img = visualize_page_content(page, all_blocks, debug_config)
+        if visual_debug_img:
+            logger.info(f"Visual debug output generated for page {page_num}: {visual_debug_img}")
+    
     # Create page structure
     page_data = {
         "page_number": page_num,
-        "content": all_blocks
+        "content": all_blocks,
+        "debug_image": visual_debug_img if visual_debug_img else None
     }
     
     return page_data
@@ -241,19 +283,38 @@ def check_dependencies():
 @click.command()
 @click.option("--input", "-i", "input_path", help="Path to input PDF file")
 @click.option("--output", "-o", "output_path", help="Path to output JSON file")
-@click.option("--enable-ocr/--disable-ocr", default=False, help="Enable OCR for scanned pages")
-@click.option("--table-mode", type=click.Choice(["auto", "lattice", "stream", "heuristic"]), default="auto", help="Table extraction mode")
+@click.option("--config", "-c", "config_path", help="Path to YAML configuration file")
+@click.option("--enable-ocr/--disable-ocr", default=None, help="Enable OCR for scanned pages")
+@click.option("--table-mode", type=click.Choice(["auto", "lattice", "stream", "heuristic"]), help="Table extraction mode")
 @click.option("--max-pages", type=int, help="Maximum number of pages to process")
-@click.option("--debug/--no-debug", default=False, help="Enable debug output")
-def main(input_path: Optional[str], output_path: Optional[str], enable_ocr: bool, table_mode: str, max_pages: Optional[int], debug: bool):
+@click.option("--debug/--no-debug", default=None, help="Enable debug output")
+@click.option("--visual-debug/--no-visual-debug", default=None, help="Enable visual debugging output")
+def main(input_path: Optional[str], output_path: Optional[str], config_path: Optional[str], 
+         enable_ocr: Optional[bool], table_mode: Optional[str], max_pages: Optional[int], 
+         debug: Optional[bool], visual_debug: Optional[bool]):
     """
     Parse PDF and convert to structured JSON.
     
     If input path is not provided, uses the default sample.
     If output path is not provided, uses the input filename with .json extension.
+    If config path is provided, loads configuration from YAML file.
     """
+    # Initialize configuration
+    config_file = config_path or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config.yaml")
+    config = ConfigManager(config_file if os.path.exists(config_file) else None)
+    
+    # Override config with command line arguments if provided
+    if debug is not None:
+        config.set("general", "debug", debug)
+    if enable_ocr is not None:
+        config.set("ocr", "enabled", enable_ocr)
+    if table_mode is not None:
+        config.set("tables", "mode", table_mode)
+    if visual_debug is not None:
+        config.set("visual_debug", "enabled", visual_debug)
+    
     # Set up logging level
-    if debug:
+    if config.get("general", "debug", False):
         logging.getLogger().setLevel(logging.DEBUG)
     
     # Check dependencies
@@ -293,7 +354,23 @@ def main(input_path: Optional[str], output_path: Optional[str], enable_ocr: bool
         
         # Process the entire document with improved structure detection
         start_time = time.time()
-        result = process_document(input_path, doc, max_pages, enable_ocr, table_mode)
+        
+        # Get configuration values
+        use_ocr = config.get("ocr", "enabled", False)
+        table_extraction_mode = config.get("tables", "mode", "auto")
+        visual_debug_enabled = config.get("visual_debug", "enabled", False)
+        
+        # Setup visual debug directory if needed
+        if visual_debug_enabled:
+            debug_dir = config.get("visual_debug", "output_dir", "debug_output")
+            os.makedirs(debug_dir, exist_ok=True)
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            debug_output_dir = os.path.join(debug_dir, timestamp)
+            os.makedirs(debug_output_dir, exist_ok=True)
+            logger.info(f"Visual debug output will be saved to {debug_output_dir}")
+            config.set("visual_debug", "output_path", debug_output_dir)
+        
+        result = process_document(input_path, doc, max_pages, use_ocr, table_extraction_mode, config)
         
         # Add version information to the metadata
         result["meta"] = {

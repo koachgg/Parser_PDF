@@ -9,6 +9,8 @@ A Python tool to parse PDF files into structured JSON, preserving page hierarchy
 - **Table extraction**: Multiple table detection strategies (lattice, stream, heuristic)
 - **Chart detection**: Identifies charts and extracts descriptions and data when available
 - **OCR support**: Falls back to OCR for scanned pages or images
+- **Visual debugging**: Visualizes detected content with color-coded bounding boxes
+- **Content overlap handling**: Intelligently resolves overlapping elements like text inside tables
 - **Output validation**: Validates JSON against a schema
 
 ## Installation
@@ -48,6 +50,13 @@ pip install -r requirements.txt
 python -m src.main --input samples/input/sample.pdf --output samples/output/out.json
 
 # With OCR enabled
+python -m src.main --input samples/input/sample.pdf --enable-ocr
+
+# With visual debugging
+python -m src.main --input samples/input/sample.pdf --visual-debug
+
+# With custom configuration
+python -m src.main --input samples/input/sample.pdf --config my_config.yaml
 python -m src.main --input samples/input/sample.pdf --output samples/output/out.json --enable-ocr
 
 # Specify table extraction method
@@ -129,11 +138,51 @@ pytest tests/test_tables.py
 pytest --cov=src tests/
 ```
 
+### Visual debugging
+
+To enable visual debugging and see how the parser is identifying content:
+
+```bash
+python -m src.main --input samples/input/sample.pdf --visual-debug
+```
+
+Or use the demo script:
+
+```bash
+python scripts/demo_visual_debug.py samples/input/sample.pdf
+```
+
+Visual debug output includes:
+- Color-coded bounding boxes (blue for text, red for tables, green for charts)
+- Individual images for each content block
+- Detailed output saved to timestamped directories
+
+For more details, see [Visual Debugging Documentation](docs/visual_debugging.md).
+
+### Content overlap handling
+
+The parser automatically handles overlapping content elements like:
+- Text inside tables
+- Overlapping charts and text
+- Headers and footers that overlap with content
+
+Configure overlap handling in config.yaml:
+
+```yaml
+content_overlap:
+  enabled: true
+  containment_threshold: 0.7
+  preserve_table_captions: true
+```
+
+For more details, see [Content Overlap Documentation](docs/content_overlap.md).
+
 ### Troubleshooting
 
 - **OCR is slow**: OCR processing is CPU-intensive. Use `--max-pages` for testing.
 - **Table detection issues**: Try different table modes with `--table-mode`.
 - **Missing dependencies**: Ensure all system dependencies are installed.
+- **Parsing errors**: Use `--visual-debug` to see how content is being identified.
 
 ## License
 

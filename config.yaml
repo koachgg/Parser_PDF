@@ -1,0 +1,62 @@
+# PDF Parser Configuration
+
+# General settings
+general:
+  debug: false
+  output_format: json
+  validate_schema: true
+
+# Text extraction settings
+text:
+  extract_headers_footers: true
+  min_paragraph_length: 5
+
+# Table extraction settings
+tables:
+  mode: auto  # Options: auto, lattice, stream, heuristic
+  min_confidence: 50
+  deduplication_threshold: 0.3  # IoU threshold for table deduplication
+  
+# Chart extraction settings
+charts:
+  use_ocr: true
+  min_vector_density: 10
+  detection_threshold: 0.6
+
+# OCR settings
+ocr:
+  enabled: false
+  dpi: 300
+  language: eng
+  use_for_tables: true
+  use_for_charts: true
+  use_for_text: false  # Only use OCR for text if regular extraction fails
+
+# Visual debugging settings
+visual_debug:
+  enabled: false
+  output_dir: debug_output
+  draw_bounding_boxes: true
+  save_images: true
+  colors:
+    paragraph: [0, 0, 255]    # Blue
+    table: [255, 0, 0]        # Red
+    chart: [0, 255, 0]        # Green
+    header: [255, 165, 0]     # Orange
+    footer: [128, 0, 128]     # Purple
+    ocr: [255, 255, 0]        # Yellow
+  
+# Content overlap settings
+content_overlap:
+  enabled: true
+  containment_threshold: 0.7  # Threshold for determining if one block is contained within another
+  overlap_threshold: 0.3      # Threshold for reporting significant overlaps
+  remove_headers_in_tables: true
+  remove_footers_in_tables: true
+  preserve_table_captions: true
+
+# Performance settings
+performance:
+  parallel_processing: false
+  max_workers: 4
+  batch_size: 5  # Pages per batch

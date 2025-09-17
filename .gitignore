@@ -74,3 +74,10 @@ Desktop.ini
 
 # Output files
 samples/output/*.json
+output/
+debug_output/
+
+# Visual debugging output
+**/debug_output/
+**/debug/
+*.debug.png
